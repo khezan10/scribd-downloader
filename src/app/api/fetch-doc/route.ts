@@ -2,14 +2,11 @@ import { NextResponse } from 'next/server';
 import puppeteer from 'puppeteer-core';
 import chromium from '@sparticuz/chromium';
 
-export const dynamic = 'force-dynamic';
-export const maxDuration = 300;
-
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 
-export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const u = url.searchParams.get('u') || '';
+export async function POST(req: Request) {
+  const body = await req.json().catch(() => ({}));
+  const u = String(body?.u || '');
   const m = u.match(/scribd\.com\/(?:document|doc|presentation|book|audiobook)\/(\d+)/) || u.match(/\/(\d{6,})\/?$/);
   if (!m) return NextResponse.json({ error: 'no-id' }, { status: 400 });
   const id = m[1];
