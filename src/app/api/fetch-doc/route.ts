@@ -1,14 +1,11 @@
 import { NextResponse } from 'next/server';
 import { createRequire } from 'module';
-import { addExtra } from 'puppeteer-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import chromium from '@sparticuz/chromium';
 const require = createRequire(import.meta.url);
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 
-const puppeteer = addExtra(require('puppeteer-core'));
-puppeteer.use(StealthPlugin());
+const puppeteer = require('puppeteer-core');
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
@@ -20,12 +17,15 @@ export async function POST(req: Request) {
   let browser;
   try {
     browser = await puppeteer.launch({
-      args: chromium.args,
+      args: [...chromium.args, '--disable-blink-features=AutomationControlled'],
       defaultViewport: null,
       executablePath: await chromium.executablePath(),
       headless: true,
     });
     const page = await browser.newPage();
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    });
     await page.setUserAgent(UA);
     await page.setViewport({ width: 1280, height: 900 });
     await page.goto(`https://www.scribd.com/document/${id}`, {
