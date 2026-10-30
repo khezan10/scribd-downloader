@@ -1,8 +1,12 @@
 import { NextResponse } from 'next/server';
-import puppeteer from 'puppeteer-core';
+import { addExtra } from 'puppeteer-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import chromium from '@sparticuz/chromium';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+
+const puppeteer = addExtra(require('puppeteer-core'));
+puppeteer.use(StealthPlugin());
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
@@ -22,31 +26,23 @@ export async function POST(req: Request) {
     const page = await browser.newPage();
     await page.setUserAgent(UA);
     await page.setViewport({ width: 1280, height: 900 });
-    // warmup: land on scribd root so Fastly sets session cookies in this browser context
-    await page.goto('https://www.scribd.com/', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-    await new Promise((r) => setTimeout(r, 8000));
-    let tokenText = '';
-    try {
-      tokenText = await page.evaluate(async (docId) => {
-        const r = await fetch(`https://id.scribd.com/document/${docId}/token`, {
-          credentials: 'include',
-          headers: { Referer: 'https://www.scribd.com/' },
-        });
-        return await r.text();
-      }, id);
-    } catch (e: any) {
-      return NextResponse.json({ error: 'token-fetch: ' + e.message }, { status: 502 });
-    }
+    await page.goto(`https://www.scribd.com/document/${id}`, {
+      waitUntil: 'domcontentloaded',
+      timeout: 90000,
+    });
     let urls: string[] = [];
     let title = '';
-    try {
-      const j = JSON.parse(tokenText);
-      urls = Array.isArray(j?.urls) ? j.urls : [];
-      title = String(j?.title || '');
-    } catch {
-      return NextResponse.json({ status: 200, len: tokenText.length, urls: [], title: 'unparseable', challenge: tokenText.includes('Client Challenge'), raw: tokenText.slice(0, 300) });
+    for (let attempt = 0; attempt < 14; attempt++) {
+      await new Promise((r) => setTimeout(r, 5000));
+      const html = await page.content();
+      urls = Array.from(new Set((html.match(/https:\/\/html\.scribdassets\.com\/[^")\s]+\.jsonp/g) || [])));
+      if (urls.length) {
+        title = ((html.match(/<title>([^<]*)<\/title>/) || [])[1] || '').replace(/\s*\|\s*PDF/i, '');
+        break;
+      }
     }
-    return NextResponse.json({ status: 200, len: tokenText.length, urls, title, challenge: tokenText.includes('Client Challenge') });
+    const raw = await page.content();
+    return NextResponse.json({ status: 200, len: raw.length, urls, title, challenge: raw.includes('Client Challenge') });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   } finally {
