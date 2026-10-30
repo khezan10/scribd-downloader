@@ -21,15 +21,21 @@ export async function POST(req: Request) {
     });
     const page = await browser.newPage();
     await page.setUserAgent(UA);
-    await page.goto(`https://id.scribd.com/document/${id}/token`, {
-      waitUntil: 'domcontentloaded',
-      timeout: 90000,
-    });
+    await page.setViewport({ width: 1280, height: 900 });
+    // warmup: land on scribd root so Fastly sets session cookies in this browser context
+    await page.goto('https://www.scribd.com/', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 8000));
     let tokenText = '';
-    for (let attempt = 0; attempt < 10; attempt++) {
-      await new Promise((r) => setTimeout(r, 5000));
-      tokenText = await page.evaluate(() => document.body.innerText || '');
-      if (!tokenText.includes('Client Challenge') && (tokenText.includes('{') || tokenText.trim().length > 10)) break;
+    try {
+      tokenText = await page.evaluate(async (docId) => {
+        const r = await fetch(`https://id.scribd.com/document/${docId}/token`, {
+          credentials: 'include',
+          headers: { Referer: 'https://www.scribd.com/' },
+        });
+        return await r.text();
+      }, id);
+    } catch (e: any) {
+      return NextResponse.json({ error: 'token-fetch: ' + e.message }, { status: 502 });
     }
     let urls: string[] = [];
     let title = '';
@@ -38,10 +44,7 @@ export async function POST(req: Request) {
       urls = Array.isArray(j?.urls) ? j.urls : [];
       title = String(j?.title || '');
     } catch {
-      // fallback: scrape jsonp out of raw html
-      const html = await page.content();
-      urls = Array.from(new Set((html.match(/https:\/\/html\.scribdassets\.com\/[^")\s]+\.jsonp/g) || [])));
-      title = ((html.match(/<title>([^<]*)<\/title>/) || [])[1] || '').replace(/\s*\|\s*PDF/i, '');
+      return NextResponse.json({ status: 200, len: tokenText.length, urls: [], title: 'unparseable', challenge: tokenText.includes('Client Challenge'), raw: tokenText.slice(0, 300) });
     }
     return NextResponse.json({ status: 200, len: tokenText.length, urls, title, challenge: tokenText.includes('Client Challenge') });
   } catch (e: any) {
