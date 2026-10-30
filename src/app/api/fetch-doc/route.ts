@@ -21,21 +21,29 @@ export async function POST(req: Request) {
     });
     const page = await browser.newPage();
     await page.setUserAgent(UA);
-    await page.goto(`https://www.scribd.com/document/${id}`, {
+    await page.goto(`https://id.scribd.com/document/${id}/token`, {
       waitUntil: 'domcontentloaded',
       timeout: 90000,
     });
-    // wait until scribd page JSON URLs appear in DOM (browser runs the Fastly JS)
-    let urls: string[] = [];
-    for (let attempt = 0; attempt < 6; attempt++) {
+    let tokenText = '';
+    for (let attempt = 0; attempt < 10; attempt++) {
       await new Promise((r) => setTimeout(r, 5000));
+      tokenText = await page.evaluate(() => document.body.innerText || '');
+      if (!tokenText.includes('Client Challenge') && (tokenText.includes('{') || tokenText.trim().length > 10)) break;
+    }
+    let urls: string[] = [];
+    let title = '';
+    try {
+      const j = JSON.parse(tokenText);
+      urls = Array.isArray(j?.urls) ? j.urls : [];
+      title = String(j?.title || '');
+    } catch {
+      // fallback: scrape jsonp out of raw html
       const html = await page.content();
       urls = Array.from(new Set((html.match(/https:\/\/html\.scribdassets\.com\/[^")\s]+\.jsonp/g) || [])));
-      if (urls.length) break;
+      title = ((html.match(/<title>([^<]*)<\/title>/) || [])[1] || '').replace(/\s*\|\s*PDF/i, '');
     }
-    const html = await page.content();
-    const title = ((html.match(/<title>([^<]*)<\/title>/) || [])[1] || '').replace(/\s*\|\s*PDF/i, '');
-    return NextResponse.json({ status: 200, len: html.length, urls, title, challenge: html.includes('Client Challenge') });
+    return NextResponse.json({ status: 200, len: tokenText.length, urls, title, challenge: tokenText.includes('Client Challenge') });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   } finally {
