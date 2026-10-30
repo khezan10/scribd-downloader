@@ -22,14 +22,20 @@ export async function POST(req: Request) {
     const page = await browser.newPage();
     await page.setUserAgent(UA);
     await page.goto(`https://www.scribd.com/document/${id}`, {
-      waitUntil: 'networkidle2',
+      waitUntil: 'domcontentloaded',
       timeout: 90000,
     });
-    await new Promise((r) => setTimeout(r, 2000));
+    // wait until scribd page JSON URLs appear in DOM (browser runs the Fastly JS)
+    let urls: string[] = [];
+    for (let attempt = 0; attempt < 6; attempt++) {
+      await new Promise((r) => setTimeout(r, 5000));
+      const html = await page.content();
+      urls = Array.from(new Set((html.match(/https:\/\/html\.scribdassets\.com\/[^")\s]+\.jsonp/g) || [])));
+      if (urls.length) break;
+    }
     const html = await page.content();
-    const urls = Array.from(new Set((html.match(/https:\/\/html\.scribdassets\.com\/[^")\s]+\.jsonp/g) || [])));
     const title = ((html.match(/<title>([^<]*)<\/title>/) || [])[1] || '').replace(/\s*\|\s*PDF/i, '');
-    return NextResponse.json({ status: 200, len: html.length, urls, title, challenge: false });
+    return NextResponse.json({ status: 200, len: html.length, urls, title, challenge: html.includes('Client Challenge') });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   } finally {
